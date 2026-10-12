@@ -43,12 +43,12 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 SITE = "https://tunisiefreelance.tn"
 LIST_URL = SITE + "/en/jobs"
 STATE_FILE = Path(os.environ.get("JOBWATCH_STATE", Path(__file__).with_name("seen.json")))
-USER_AGENT = "jobwatch/1.0 (personal job alerts; checks every 15 min)"
+USER_AGENT = "jobwatch/1.1 (personal job alerts; checks every 15 min)"
 REQUEST_PAUSE_S = 1.5          # pause between page requests, to stay polite
 MAX_REMEMBERED = 3000
 
@@ -116,8 +116,23 @@ JOB_LINK_RE = re.compile(
 
 
 STOP_RE = re.compile(
-    r"^(similar jobs|other jobs|more jobs|related jobs|offres similaires|terms of service|"
-    r"privacy policy|©|copyright|all rights reserved)", re.IGNORECASE)
+    r"^(similar jobs|other (open )?jobs|more jobs|related jobs|open jobs|offres similaires|"
+    r"autres offres|terms of service|privacy policy|©|copyright|all rights reserved)", re.IGNORECASE)
+
+# money: TND / DT / د.ت after the number, or € / $ before it; ranges and "up to" allowed
+_NUM = r"\d[\d ., ]*\d|\d"
+BUDGET_RES = [
+    re.compile(rf"((?:up to\s*)?(?:{_NUM})(?:\s*-\s*(?:{_NUM}))?\s*(?:د\.ت|TND|DT)(?:\s*/\s*hr)?)", re.I),
+    re.compile(rf"((?:up to\s*)?[€$]\s?(?:{_NUM})(?:\s*-\s*[€$]?\s?(?:{_NUM}))?(?:\s*/\s*hr)?)", re.I),
+    re.compile(rf"((?:up to\s*)?(?:{_NUM})(?:\s*-\s*(?:{_NUM}))?\s*(?:EUR|USD|€)(?:\s*/\s*hr)?)", re.I),
+]
+
+
+def find_budget(text):
+    """The job's own budget: the first amount on the page, ignoring the client's 'Total spent'."""
+    text = re.sub(r"total\s*spent\s*:?\s*\n?[^\n]*", "", text, flags=re.I)
+    hits = [(m.start(), m.group(1).strip()) for rx in BUDGET_RES for m in [rx.search(text)] if m]
+    return min(hits)[1] if hits else None
 
 
 def fetch(url):
@@ -170,7 +185,7 @@ def parse_job(page_html, slug):
     text = text.replace("postJobWizard.budget.perHour", "/hr")
     body = text[:3500]
 
-    budget = _first(r"((?:up to\s*)?\d[\d ., ]*(?:\s*-\s*\d[\d ., ]*)?\s*(?:د\.ت|TND|DT)(?:\s*/\s*hr)?)", body)
+    budget = find_budget(body)
     job_type = _first(r"\b(Hourly|Fixed(?:[- ]price)?)\b", body)
     proposals = _first(r"Proposals?\s*:?\s*\n?\s*((?:less than\s*)?\d+(?:\s*(?:to|-)\s*\d+)?\+?)", body)
     if re.search(r"payment\s+(?:method\s+)?not\s+verified|unverified\s+payment", body, re.I):
